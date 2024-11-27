@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat with Avatars</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <!-- User Info Section -->
+        <div id="userInfo" class="user-info">
+            <input type="text" id="username" placeholder="Enter your name">
+            <input type="url" id="avatar" placeholder="Avatar URL (optional)">
+            <p>Or choose an avatar:</p>
+            <div class="avatar-options">
+                <!-- Avatar Images -->
+                <img src="https://png.pngtree.com/png-vector/20221102/ourmid/pngtree-hacker-logo-png-image_6408677.png" onclick="selectAvatar(this.src)" class="avatar-option">
+                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTvvYN8q402lYgIckPhPGH12PCRSx8ZBAplig&s" onclick="selectAvatar(this.src)" class="avatar-option">
+                <img src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ8_hrcriiD730WmTAbyyTYRECqKEiCliQlNg&s" onclick="selectAvatar(this.src)" class="avatar-option">
+                <img src="https://miro.medium.com/v2/resize:fit:525/1*lyyXmbeoK5JiIBNCnzzjjg.png" onclick="selectAvatar(this.src)" class="avatar-option">
+                <img src="https://imgv3.fotor.com/images/gallery/american-anime-stule-naked-man-avatar.jpg" onclick="selectAvatar(this.src)" class="avatar-option">
+                <img src="https://img.freepik.com/premium-photo/ai-avatar-girl-photo_940072-112.jpg" onclick="selectAvatar(this.src)" class="avatar-option">
+            </div>
+
+            <p>Select Message Color:</p>
+            <input type="color" id="messageColor" value="#0078D7">
+            <button onclick="startChat()">Join Chat</button>
+        </div>
+
+        <!-- Chat Room Section -->
+        <div id="chatRoom" class="chat-room" style="display: none;">
+            <header><h2>Welcome to the Chat Room</h2></header>
+            <div id="messages" class="messages-container"></div>
+            <div id="typingIndicator" class="typing-indicator" style="font-style: italic; color: gray; margin-left: 10px;">Typing...</div>
+            <footer>
+                <input type="text" id="messageInput" placeholder="Type a message" autocomplete="off">
+                <input type="file" id="mediaInput" accept="*/*" onchange="sendMedia(this)" style="display: none;">
+                <button id="chooseFileButton" onclick="document.getElementById('mediaInput').click()">Choose File</button>
+                <button onclick="sendMessage()">Send</button>
+            </footer>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.3.2/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        const socket = io();
+        let username = '';
+        let selectedAvatar = '';
+        let messageColor = '#0078D7';
+        let typingTimeout;
+
+        function selectAvatar(url) {
+            selectedAvatar = url;
+            document.getElementById('avatar').value = '';
+        }
+
+        function startChat() {
+            const nameInput = document.getElementById('username').value;
+            const avatarInput = document.getElementById('avatar').value;
+            const colorInput = document.getElementById('messageColor').value;
+
+            if (!nameInput.trim()) {
+                alert('Please enter your name.');
+                return;
+            }
+
+            username = nameInput;
+            selectedAvatar = avatarInput || selectedAvatar || 'default-avatar.png';
+            messageColor = colorInput;
+
+            document.getElementById('userInfo').style.display = 'none';
+            document.getElementById('chatRoom').style.display = 'block';
+
+            socket.emit('join_chat', { username, avatar: selectedAvatar });
+        }
+
+        socket.on('receive_message', (data) => {
+            const messagesContainer = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message-container';
+
+            const messageId = `message-${Date.now()}`;
+            messageDiv.id = messageId;
+
+            const isUserMessage = data.username === username;
+            messageDiv.innerHTML = `
+                <img src="${data.avatar || 'default-avatar.png'}" class="avatar">
+                <div class="message user-message" style="background-color: ${isUserMessage ? messageColor : '#f1f1f1'};">
+                    <div class="message-content">
+                        <span class="user-message-name">${data.username}</span>
+                        <span>${data.message}</span>
+                    </div>
+                    <span class="timestamp">${data.timestamp}</span>
+                    <button onclick="addReaction('${messageId}')">React</button>
+                    <div class="reactions" id="reactions-${messageId}"></div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            hideTypingIndicator();
+        });
+
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const messageText = messageInput.value;
+
+            if (messageText.trim()) {
+                const messageData = {
+                    message: messageText,
+                    username: username,
+                    avatar: selectedAvatar,
+                    timestamp: new Date().toLocaleTimeString()
+                };
+                socket.emit('send_message', messageData);
+                messageInput.value = '';
+                hideTypingIndicator();
+            }
+        }
+
+        document.getElementById('messageInput').addEventListener('input', () => {
+            clearTimeout(typingTimeout);
+
+            if (document.getElementById('messageInput').value) {
+                socket.emit('typing', { username });
+            } else {
+                socket.emit('stop_typing', { username });
+            }
+
+            typingTimeout = setTimeout(() => {
+                socket.emit('stop_typing', { username });
+            }, 1000);
+        });
+
+        socket.on('display_typing', (data) => {
+            document.getElementById('typingIndicator').innerText = `${data.username} is typing...`;
+        });
+
+        socket.on('hide_typing', hideTypingIndicator);
+
+        function hideTypingIndicator() {
+            document.getElementById('typingIndicator').innerText = '';
+        }
+
+        function addReaction(messageId) {
+            const emoji = prompt("Enter your reaction (emoji):");
+            if (emoji) {
+                socket.emit('send_reaction', { messageId, emoji, username });
+            }
+        }
+
+        socket.on('receive_reaction', (data) => {
+            const reactionsDiv = document.getElementById(`reactions-${data.messageId}`);
+            if (reactionsDiv) {
+                const reactionSpan = document.createElement('span');
+                reactionSpan.className = 'reaction';
+                reactionSpan.textContent = `${data.username}: ${data.emoji}`;
+                reactionsDiv.appendChild(reactionSpan);
+                reactionsDiv.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
